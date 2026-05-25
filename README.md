@@ -99,10 +99,10 @@ Q: The client connects, but images aren't loading.
 Q: Video playback fails.
 * The proxy automatically intercepts and redirects stream endpoints directly to Emby to ensure playback is handled natively without bottlenecks. Ensure the device running Wholphin can reach the Emby server's IP address directly on your network.
 
-Q: Is this proxy 100% functional for all media types?
+Q: Is this proxy 100% functional?
 * Core video playback (Movies, TV Shows) works flawlessly. However, music playback is currently experimental and may yield mixed results, while photo libraries remain untested.
 * **Client Configuration Tip:** It is highly recommended to remove the broken "Next Up" row in your Wholphin client, as Emby automatically merges "Next Up" and "Continue Watching" into a single feed. 
-  * *To remove the row:* Navigate to the Left Nav Bar > Settings > Customize Home Screen > Settings > select **Reset Settings**. This will unhide the option allowing you to delete the row. You will need to perform this reset step anytime you wish to modify your home screen layout in the future.
+  * *To remove the row:* Navigate to the Left Nav Bar > Settings > Customize Home Screen > Settings > select **Reset Settings**. This will unhide the option allowing you to delete the row. You will need to perform this reset step anytime you wish to modify your home screen layout in the future. The settings do not translate between perfectly between Emby and Jellyfin so there will be jankiness like this.
 
 Q: Will this proxy require ongoing maintenance?
 * Not if I'm maintaining it lmfao. The proxy's stability depends on Emby and Jellyfin's core APIs remaining relatively consistent. A major upstream update to either platform could temporarily break compatibility. This project is provided as-is, and community forks, pull requests, and contributions to patch future breaks are highly encouraged!
