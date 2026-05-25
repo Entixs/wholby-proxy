@@ -105,7 +105,7 @@ Q: Is this proxy 100% functional?
   * *To remove the row:* Navigate to the Left Nav Bar > Settings > Customize Home Screen > Settings > select **Reset Settings**. This will unhide the option allowing you to delete the row. You will need to perform this reset step anytime you wish to modify your home screen layout in the future. The settings do not translate between perfectly between Emby and Jellyfin so there will be jankiness like this.
 
 Q: Will this proxy require ongoing maintenance?
-* Not if I'm maintaining it lmfao. The proxy's stability depends on Emby and Jellyfin's core APIs remaining relatively consistent. A major upstream update to either platform could temporarily break compatibility. This project is provided as-is, and community forks, pull requests, and contributions to patch future breaks are highly encouraged!
+* The proxy's stability depends on Emby and Jellyfin's core APIs remaining relatively consistent. A major upstream update to either platform could temporarily break compatibility. This project is provided as-is, and community forks, pull requests, and contributions to patch future breaks are highly encouraged!
 
 ---
 
