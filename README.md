@@ -42,6 +42,7 @@ To run this proxy, you will need one of the following environments:
 First, clone the repository to your local machine or server:
 
 git clone https://github.com/YOUR_USERNAME/wholby-proxy.git
+
 cd wholby-proxy
 
 Next, copy the environment template and customize it:
