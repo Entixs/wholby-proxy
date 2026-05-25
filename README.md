@@ -101,7 +101,7 @@ Q: Video playback fails.
 
 Q: Is this proxy 100% functional for all media types?
 * Core video playback (Movies, TV Shows) works flawlessly. However, music playback is currently experimental and may yield mixed results, while photo libraries remain untested.
-* **Client Configuration Tip:** It is highly recommended to remove the "Next Up" row in your Wholphin client, as Emby automatically merges "Next Up" and "Continue Watching" into a single feed. 
+* **Client Configuration Tip:** It is highly recommended to remove the broken "Next Up" row in your Wholphin client, as Emby automatically merges "Next Up" and "Continue Watching" into a single feed. 
   * *To remove the row:* Navigate to the Left Nav Bar > Settings > Customize Home Screen > Settings > select **Reset Settings**. This will unhide the option allowing you to delete the row. You will need to perform this reset step anytime you wish to modify your home screen layout in the future.
 
 Q: Will this proxy require ongoing maintenance?
