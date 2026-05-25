@@ -104,7 +104,7 @@ Q: Is this proxy 100% functional for all media types?
   * *To remove the row:* Navigate to the Left Nav Bar > Settings > Customize Home Screen > Settings > select **Reset Settings**. This will unhide the option allowing you to delete the row. You will need to perform this reset step anytime you wish to modify your home screen layout in the future.
 
 Q: Will this proxy require ongoing maintenance?
-* The proxy's stability depends on Emby and Jellyfin's core APIs remaining relatively consistent. A major upstream update to either platform could temporarily break compatibility. This project is provided as-is, and community forks, pull requests, and contributions to patch future breaks are highly encouraged!
+* Not if I'm maintaining it lmfao. The proxy's stability depends on Emby and Jellyfin's core APIs remaining relatively consistent. A major upstream update to either platform could temporarily break compatibility. This project is provided as-is, and community forks, pull requests, and contributions to patch future breaks are highly encouraged!
 
 ---
 
@@ -112,4 +112,4 @@ Q: Will this proxy require ongoing maintenance?
 
 * Created specifically to bridge Emby backends with the Wholphin client ecosystem.
 * Built using Express and http-proxy-middleware.
-* Developed with the assistance of AI tools.
+* Developed with the assistance of AI tools. Or the other way around, really... I basically gave the AI emotional support.
