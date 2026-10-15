@@ -8,21 +8,78 @@ const app = express();
 
 // --- Configuration ---
 // Replace with your actual Emby server URL and Port, or pass via environment variable
-const EMBY_URL = (process.env.EMBY_URL || 'http://YOUR_EMBY_IP:8096').replace(/\/+$/, '');
+const normalizeEmbyUrl = (value) => String(value || '').trim().replace(/\/+$/, '');
 const PORT = parseInt(process.env.PORT, 10) || 8096;
-// "auto" (default): redirect to Emby only when the client connects over the same protocol as EMBY_URL
-//   (players refuse an http -> https redirect), otherwise pipe the stream through this proxy.
-// "redirect": always redirect (no proxy bandwidth; Emby must be reachable by the client over the same protocol).
-// "proxy": always pipe streams through this proxy.
-const STREAM_MODE = (process.env.STREAM_MODE || 'auto').toLowerCase();
-const DEBUG = process.env.DEBUG === 'true';
-// Jellyfin version reported to clients. Wholphin refuses servers older than its SDK's minimum.
-// Wholphin clients only direct play: PlaybackInfo always reports direct play and transcode requests are refused,
-// so Emby never spends CPU transcoding for them. Set DIRECT_PLAY_ONLY=false to allow transcoding.
-const DIRECT_PLAY_ONLY = (process.env.DIRECT_PLAY_ONLY || 'true').toLowerCase() !== 'false';
-const REPORTED_VERSION = process.env.REPORTED_VERSION || '10.10.7';
-// Emby merges "Next Up" into "Continue Watching". We fetch this many from Emby, then split and trim per request.
-const RESUME_FETCH_LIMIT = parseInt(process.env.RESUME_FETCH_LIMIT, 10) || 100;
+// Bind address. Use 127.0.0.1 when a reverse proxy (nginx) sits in front.
+const HOST = process.env.HOST || '0.0.0.0';
+// Settings that can be changed while the proxy runs (from the admin dashboard). Defaults come from the environment;
+// values saved from the dashboard (data/settings.json) override them at startup.
+//   embyUrl: the Emby server this proxy talks to. Changing it from the dashboard signs everyone out.
+//   streamMode: "auto" redirects the client straight to Emby when client and the Emby address share a protocol (players refuse
+//     an http -> https redirect), otherwise pipes the stream through this proxy. "redirect" always redirects (no proxy
+//     bandwidth; Emby must be reachable by the client). "proxy" always pipes streams through this proxy.
+//   directPlayOnly: Wholphin clients only direct play: PlaybackInfo always reports direct play and transcode requests
+//     are refused, so Emby never spends CPU transcoding for them.
+//   reportedVersion: Jellyfin version shown to clients. Wholphin refuses servers older than its SDK's minimum.
+//   resumeFetchLimit: Emby merges "Next Up" into "Continue Watching". We fetch this many, then split and trim per request.
+const settings = {
+    embyUrl: normalizeEmbyUrl(process.env.EMBY_URL || 'http://YOUR_EMBY_IP:8096'),
+    streamMode: (process.env.STREAM_MODE || 'auto').toLowerCase(),
+    directPlayOnly: (process.env.DIRECT_PLAY_ONLY || 'true').toLowerCase() !== 'false',
+    reportedVersion: process.env.REPORTED_VERSION || '10.10.7',
+    resumeFetchLimit: parseInt(process.env.RESUME_FETCH_LIMIT, 10) || 100,
+    debug: process.env.DEBUG === 'true',
+};
+
+// Accepts only a plain http(s) address such as http://192.168.1.100:8096 or https://emby.example.com.
+const parseEmbyUrl = (raw) => {
+    if (typeof raw !== 'string' || raw.trim().length === 0 || raw.length > 300) return { ok: false, error: 'Enter the Emby server address, for example http://192.168.1.100:8096.' };
+    let u;
+    try { u = new URL(raw.trim()); } catch { return { ok: false, error: 'That does not look like a web address. Start it with http:// or https://.' }; }
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return { ok: false, error: 'The address must start with http:// or https://.' };
+    if (u.username || u.password) return { ok: false, error: 'Leave the username and password out of the address.' };
+    if (u.search || u.hash) return { ok: false, error: 'Use only the server address, without a ? or # part.' };
+    if (!u.hostname || /your_emby_ip/i.test(u.hostname)) return { ok: false, error: 'Enter the real address of your Emby server.' };
+    return { ok: true, url: normalizeEmbyUrl(u.origin + u.pathname) };
+};
+
+// Checks a partial settings object. Returns { ok: true, value } with cleaned values or { ok: false, errors }.
+const validateSettings = (patch) => {
+    const errors = [];
+    const value = {};
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return { ok: false, errors: ['Settings must be an object.'] };
+    for (const [key, v] of Object.entries(patch)) {
+        switch (key) {
+            case 'embyUrl': {
+                const parsed = parseEmbyUrl(v);
+                if (parsed.ok) value.embyUrl = parsed.url;
+                else errors.push(parsed.error);
+                break;
+            }
+            case 'streamMode':
+                if (['auto', 'redirect', 'proxy'].includes(v)) value.streamMode = v;
+                else errors.push('streamMode must be auto, redirect or proxy.');
+                break;
+            case 'directPlayOnly':
+            case 'debug':
+                if (typeof v === 'boolean') value[key] = v;
+                else errors.push(`${key} must be true or false.`);
+                break;
+            case 'reportedVersion':
+                if (typeof v === 'string' && /^\d{1,2}\.\d{1,3}\.\d{1,3}$/.test(v)) value.reportedVersion = v;
+                else errors.push('reportedVersion must look like 10.10.7.');
+                break;
+            case 'resumeFetchLimit':
+                if (Number.isInteger(v) && v >= 10 && v <= 500) value.resumeFetchLimit = v;
+                else errors.push('resumeFetchLimit must be a whole number from 10 to 500.');
+                break;
+            default:
+                errors.push(`Unknown setting: ${key}.`);
+        }
+    }
+    return errors.length ? { ok: false, errors } : { ok: true, value };
+};
+
 
 // Generate a unique UUID for your proxy instance, or pass via environment variable
 const PROXY_SERVER_ID = process.env.PROXY_SERVER_ID || "YOUR_UNIQUE_UUID_HERE";  
@@ -65,6 +122,71 @@ const setToken = (token, uid) => {
     tokenToUserId.set(token, uid);
     if (tokenToUserId.size > MAX_TOKENS) tokenToUserId.delete(tokenToUserId.keys().next().value);
     saveTokens();
+};
+
+// --- Settings file (written by the admin dashboard) ---
+const SETTINGS_FILE = process.env.SETTINGS_FILE || path.join(path.dirname(process.env.TOKEN_FILE || path.join(__dirname, 'data', 'tokens.json')), 'settings.json');
+const applySettings = (patch, { persist = true } = {}) => {
+    const result = validateSettings(patch);
+    if (!result.ok) return result;
+    const embyChanged = Boolean(result.value.embyUrl) && result.value.embyUrl !== settings.embyUrl;
+    Object.assign(settings, result.value);
+    if (persist && embyChanged) {
+        // Saved logins, play sessions and cached filters belong to the previous Emby server.
+        tokenToUserId.clear();
+        playSessionToken.clear();
+        deviceToken.clear();
+        filterCache.clear();
+        saveTokens();
+    }
+    if (persist) {
+        try {
+            let saved = {};
+            try { saved = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')); } catch { /* first save */ }
+            fs.mkdirSync(path.dirname(SETTINGS_FILE), { recursive: true });
+            const tmp = `${SETTINGS_FILE}.tmp`;
+            fs.writeFileSync(tmp, JSON.stringify({ ...saved, ...result.value }, null, 2), { mode: 0o600 });
+            fs.renameSync(tmp, SETTINGS_FILE);
+        } catch (err) {
+            return { ok: false, errors: [`Settings applied but could not be saved: ${err.message}`] };
+        }
+    }
+    return result;
+};
+const loadSettings = () => {
+    try {
+        const saved = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
+        const result = applySettings(saved, { persist: false });
+        if (!result.ok) console.error('[Settings] ignored invalid saved settings:', result.errors.join(' '));
+        else console.log(`[Settings] loaded ${Object.keys(result.value).length} saved setting(s) from ${SETTINGS_FILE}`);
+    } catch (err) {
+        if (err.code !== 'ENOENT') console.error('[Settings] could not load:', err.message);
+    }
+};
+
+// --- Counters and recent errors, shown in the admin dashboard ---
+const stats = {
+    startedAt: Date.now(),
+    requests: 0,
+    status: { s2xx: 0, s3xx: 0, s4xx: 0, s5xx: 0 },
+    embyErrors: 0,
+    perMinute: new Map(), // minute number -> request count, last 60 minutes kept
+};
+const recentErrors = [];
+const MAX_RECENT_ERRORS = 200;
+const noteError = (text) => {
+    recentErrors.push({ at: Date.now(), text: redact(String(text)).slice(0, 400) });
+    if (recentErrors.length > MAX_RECENT_ERRORS) recentErrors.shift();
+};
+const countRequest = (res) => {
+    stats.requests += 1;
+    const minute = Math.floor(Date.now() / 60000);
+    stats.perMinute.set(minute, (stats.perMinute.get(minute) || 0) + 1);
+    for (const m of stats.perMinute.keys()) if (m < minute - 60) stats.perMinute.delete(m);
+    res.on('finish', () => {
+        const c = Math.floor(res.statusCode / 100);
+        if (c >= 2 && c <= 5) stats.status[`s${c}xx`] += 1;
+    });
 };
 
 // PlaySessionId -> access token. Wholphin fetches direct-play streams with a plain HTTP client that sends no
@@ -163,12 +285,13 @@ const isTranscodeRequest = (rawUrl) => {
 const redact = (url) => String(url).replace(/([?&](?:api_key|apikey|token|accesstoken)=)[^&]*/ig, '$1***');
 
 // --- Express Body Parser ---
+app.use((req, res, next) => { countRequest(res); next(); });
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 // --- Debug Logger ---
 app.use((req, res, next) => {
-    if (DEBUG) {
+    if (settings.debug) {
         console.log(`[DEBUG] Incoming Request: ${req.method} ${redact(req.url)}`);
         if (/\/stream/i.test(req.url)) console.log(`[DEBUG]   headers: ${Object.keys(req.headers).join(", ")} ua=${req.headers["user-agent"]}`);
     }
@@ -451,7 +574,7 @@ app.use((req, res, next) => {
 // Direct-play-only: music and theme songs use /Audio/<id>/universal; serve the raw file instead of transcoding.
 app.use((req, res, next) => {
     rememberDevice(req.headers);
-    if (DIRECT_PLAY_ONLY && req.method === 'GET') {
+    if (settings.directPlayOnly && req.method === 'GET') {
         const rewritten = rewriteUniversalAudio(req.url);
         if (rewritten) req.url = req.originalUrl = rewritten; // http-proxy-middleware re-reads originalUrl
     }
@@ -460,7 +583,7 @@ app.use((req, res, next) => {
 
 // Direct-play-only: refuse anything that would start a transcode.
 app.use((req, res, next) => {
-    if (DIRECT_PLAY_ONLY && req.method === 'GET' && isTranscodeRequest(req.url)) {
+    if (settings.directPlayOnly && req.method === 'GET' && isTranscodeRequest(req.url)) {
         return res.status(403).json({ message: 'Transcoding is disabled on this server; the file must be played directly.' });
     }
     next();
@@ -486,7 +609,7 @@ app.get('/Items/Filters', async (req, res) => {
         const hit = filterCache.get(cacheKey);
         if (hit && Date.now() - hit.at < 10 * 60 * 1000) return res.json(hit.value);
         const names = async (endpoint) => {
-            const r = await fetch(`${EMBY_URL}/emby/${endpoint}?${qp}`, { headers: { 'X-Emby-Token': token } });
+            const r = await fetch(`${settings.embyUrl}/emby/${endpoint}?${qp}`, { headers: { 'X-Emby-Token': token } });
             if (!r.ok) throw new Error(`${endpoint} -> ${r.status}`);
             return ((await r.json()).Items || []).map((i) => i.Name).filter(Boolean);
         };
@@ -502,6 +625,7 @@ app.get('/Items/Filters', async (req, res) => {
         res.json(value);
     } catch (err) {
         console.error('[Filters]', err.message);
+        noteError(`[Filters] ${err.message}`);
         res.status(502).json({ message: 'Could not read filter options from Emby.' });
     }
 });
@@ -662,7 +786,7 @@ const resumeQuery = (path, { episodesOnly = false }) => {
         deleteParamsCI(qp, ['includeitemtypes']);
         qp.set('IncludeItemTypes', 'Episode');
     }
-    qp.set('Limit', String(RESUME_FETCH_LIMIT));
+    qp.set('Limit', String(settings.resumeFetchLimit));
     return `${base}?${qp.toString().replace(/%2C/gi, ',')}`;
 };
 
@@ -875,11 +999,11 @@ const shouldRedirect = (mode, clientProto, embyUrl) => {
 // Stream requests: let the client fetch straight from Emby when that is safe, otherwise pipe them through.
 app.get(/^\/(Videos|Audio)\/[^/]+\/stream/i, (req, res, next) => {
     const clientProto = String(req.headers['x-forwarded-proto'] || req.protocol).split(',')[0].trim();
-    if (!shouldRedirect(STREAM_MODE, clientProto, EMBY_URL)) return next();
+    if (!shouldRedirect(settings.streamMode, clientProto, settings.embyUrl)) return next();
     let target = transformPath(req.originalUrl, null);
     const sessionToken = resolveStreamToken(req.originalUrl, req.headers);
     if (sessionToken) target += (target.includes('?') ? '&' : '?') + `api_key=${encodeURIComponent(sessionToken)}`;
-    res.redirect(302, `${EMBY_URL}${target}`);
+    res.redirect(302, `${settings.embyUrl}${target}`);
 });
 
 // --- 6. The proxies ---
@@ -927,16 +1051,17 @@ const onProxyReq = (proxyReq, req) => {
         proxyReqUnsafe(proxyReq, req);
     } catch (err) {
         console.error('[Proxy Request Error]', err.message);
+        noteError(`[Proxy Request Error] ${err.message}`);
     }
 };
 const proxyReqUnsafe = (proxyReq, req) => {
     const userId = getUserIdFromReq(req.url, req);
     req.wholbyPlan = userId ? planSplit(req.url) : null;
     const newPath = transformPath(req.url, userId);
-    if (DEBUG) console.log(`[Emby Bound]     -> ${req.method} ${redact(newPath)}`);
+    if (settings.debug) console.log(`[Emby Bound]     -> ${req.method} ${redact(newPath)}`);
     // Jellyfin's GET /UserItems/<id>/UserData does not exist on Emby; read the item and return its UserData.
     let finalPath = newPath;
-    if (DIRECT_PLAY_ONLY && req.method === 'POST' && /\/Items\/[^/]+\/PlaybackInfo/i.test(req.url) && req.body && typeof req.body === 'object') {
+    if (settings.directPlayOnly && req.method === 'POST' && /\/Items\/[^/]+\/PlaybackInfo/i.test(req.url) && req.body && typeof req.body === 'object') {
         forceDirectPlayRequest(req.body);
         const qp = new URLSearchParams(finalPath.split('?')[1] || '');
         for (const [k] of [...qp]) if (/^(enabletranscoding|enabledirectplay|enabledirectstream|maxstreamingbitrate)$/i.test(k)) qp.delete(k);
@@ -969,15 +1094,17 @@ const proxyReqUnsafe = (proxyReq, req) => {
 
 const onError = (err, req, res) => {
     console.error('[Proxy Error]', err.message);
+    noteError(`[Proxy Error] ${err.message} (${req.method} ${req.url})`);
     if (!res.headersSent) res.status(502).send('Proxy upstream error');
 };
 
 // Binary traffic: streamed straight through, no buffering.
-const streamProxy = createProxyMiddleware({ target: EMBY_URL, changeOrigin: true, onError, onProxyReq });
+const streamProxy = createProxyMiddleware({ target: settings.embyUrl, router: () => settings.embyUrl, changeOrigin: true, onError, onProxyReq });
 
 // Everything else: buffered so the JSON can be translated.
 const jsonProxy = createProxyMiddleware({
-    target: EMBY_URL,
+    target: settings.embyUrl,
+    router: () => settings.embyUrl, // read on every request so the dashboard can change the Emby server
     changeOrigin: true,
     selfHandleResponse: true,
     onError,
@@ -992,6 +1119,8 @@ const jsonProxy = createProxyMiddleware({
 
         if (proxyRes.statusCode >= 400) {
             console.error(`[Emby Error] ${proxyRes.statusCode} ${req.method} ${redact(req.url)}`);
+            stats.embyErrors += 1;
+            noteError(`[Emby Error] ${proxyRes.statusCode} ${req.method} ${req.url}`);
             // Emby answers some Jellyfin-only list queries with a 5xx; show an empty list instead of failing the screen.
             // Auth and client errors (4xx) are passed through so logins and lookups fail honestly.
             if (isJson && proxyRes.statusCode >= 500 && req.method === 'GET') {
@@ -1008,7 +1137,7 @@ const jsonProxy = createProxyMiddleware({
 
                 if (req.url.match(/\/System\/Info\/Public/i)) {
                     data.Id = PROXY_SERVER_ID;
-                    data.Version = REPORTED_VERSION;
+                    data.Version = settings.reportedVersion;
                     data.ProductName = "Jellyfin Server";
                     data.StartupWizardCompleted = true;
                     return Buffer.from(JSON.stringify(data)); 
@@ -1017,7 +1146,7 @@ const jsonProxy = createProxyMiddleware({
                 if (req.url.match(/\/System\/Info/i)) {
                     data.Id = PROXY_SERVER_ID;
                     data.ServerName = "Wholby Proxy";
-                    data.Version = REPORTED_VERSION;
+                    data.Version = settings.reportedVersion;
                     return Buffer.from(JSON.stringify(data));
                 }
 
@@ -1031,7 +1160,7 @@ const jsonProxy = createProxyMiddleware({
                     return Buffer.from(JSON.stringify(data)); 
                 }
 
-                if (DIRECT_PLAY_ONLY && /\/PlaybackInfo/i.test(req.url)) forceDirectPlayResponse(data);
+                if (settings.directPlayOnly && /\/PlaybackInfo/i.test(req.url)) forceDirectPlayResponse(data);
 
                 if (data.PlaySessionId && /\/PlaybackInfo/i.test(req.url)) {
                     rememberPlaySession(data.PlaySessionId, tokenFromRequest(req.url, req.headers));
@@ -1080,6 +1209,7 @@ const jsonProxy = createProxyMiddleware({
                 return Buffer.from(JSON.stringify(data));
             } catch (e) {
                 console.error("[Proxy Intercept Error]", e);
+                noteError(`[Proxy Intercept Error] ${e && e.message} (${req.method} ${req.url})`);
                 return responseBuffer; 
             }
         }
@@ -1089,7 +1219,8 @@ const jsonProxy = createProxyMiddleware({
 
 // Jellyfin's /socket is Emby's /embywebsocket (same JSON message envelope).
 const wsProxy = createProxyMiddleware({
-    target: EMBY_URL,
+    target: settings.embyUrl,
+    router: () => settings.embyUrl,
     changeOrigin: true,
     ws: true,
     pathRewrite: { '^/socket': '/embywebsocket' },
@@ -1102,7 +1233,8 @@ app.use('/', (req, res, next) => (isBinaryPath(req.url) ? streamProxy : jsonProx
 if (require.main === module) {
     loadTokens();
     loadPrefs();
-    if (EMBY_URL.includes('YOUR_EMBY_IP') || !/^https?:\/\//i.test(EMBY_URL)) {
+    loadSettings();
+    if (!parseEmbyUrl(settings.embyUrl).ok) {
         console.error('EMBY_URL is missing or invalid. Set it to the full Emby URL, e.g. http://192.168.1.100:8096');
         process.exit(1);
     }
@@ -1110,11 +1242,25 @@ if (require.main === module) {
         console.error('PROXY_SERVER_ID must be a UUID (generate one with `uuidgen`).');
         process.exit(1);
     }
-    const server = app.listen(PORT, '0.0.0.0', () => console.log(`Wholby Proxy listening on port ${PORT} -> ${EMBY_URL} (streams: ${STREAM_MODE})`));
+    const server = app.listen(PORT, HOST, () => console.log(`Wholby Proxy listening on ${HOST}:${PORT} -> ${settings.embyUrl} (streams: ${settings.streamMode})`));
+    const adminPort = parseInt(process.env.ADMIN_PORT, 10) || 0;
+    if (adminPort) {
+        require('./admin').start({
+            port: adminPort,
+            host: process.env.ADMIN_HOST || '127.0.0.1',
+            dataDir: path.dirname(TOKEN_FILE),
+            settings, validateSettings, applySettings, stats, recentErrors,
+            clearErrors: () => { recentErrors.length = 0; },
+            serverId: PROXY_SERVER_ID,
+            listen: { host: HOST, port: PORT },
+            counts: () => ({ logins: tokenToUserId.size, playSessions: playSessionToken.size, devices: deviceToken.size }),
+            version: require('./package.json').version,
+        });
+    }
     server.on('upgrade', (req, socket, head) => {
         if (/^\/socket(\?|$)/i.test(req.url)) wsProxy.upgrade(req, socket, head);
         else socket.destroy();
     });
 }
 
-module.exports = { rewriteUniversalAudio, rememberDevice, forceDirectPlayRequest, forceDirectPlayResponse, isTranscodeRequest, normalizeUserData, asksOnlyForJellyTypes, app, rememberPlaySession, resolveStreamToken, shouldRedirect, planSplit, splitItems, resumeQuery, toUUID, deflateUUID, deflatePath, cleanQuery, rewriteRoute, transformPath, isBinaryPath, redact };
+module.exports = { parseEmbyUrl, settings, validateSettings, applySettings, stats, recentErrors, rewriteUniversalAudio, rememberDevice, forceDirectPlayRequest, forceDirectPlayResponse, isTranscodeRequest, normalizeUserData, asksOnlyForJellyTypes, app, rememberPlaySession, resolveStreamToken, shouldRedirect, planSplit, splitItems, resumeQuery, toUUID, deflateUUID, deflatePath, cleanQuery, rewriteRoute, transformPath, isBinaryPath, redact };

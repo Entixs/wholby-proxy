@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Wholby Proxy Admin</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <section id="loading" class="center"><p class="muted">Loading&hellip;</p></section>
+
+  <section id="notConfigured" class="center" hidden>
+    <div class="card narrow">
+      <h1>Set the admin password</h1>
+      <p>The dashboard needs a password before anyone can log in. On the machine that runs the proxy, run:</p>
+      <pre>npm run admin-password</pre>
+      <p class="muted">Then reload this page. No restart is needed.</p>
+    </div>
+  </section>
+
+  <section id="loginView" class="center" hidden>
+    <form id="loginForm" class="card narrow" autocomplete="on">
+      <h1>Wholby Proxy</h1>
+      <p class="muted">Admin login</p>
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
+      <p id="loginError" class="error" role="alert" hidden></p>
+      <button type="submit" class="primary">Log in</button>
+    </form>
+  </section>
+
+  <section id="dashView" hidden>
+    <header class="bar">
+      <div>
+        <h1>Wholby Proxy</h1>
+        <p class="muted" id="subtitle"></p>
+      </div>
+      <div class="bar-actions">
+        <span id="embyPill" class="pill">Emby: not checked</span>
+        <button id="logout" type="button">Log out</button>
+      </div>
+    </header>
+
+    <div class="grid">
+      <article class="card" aria-labelledby="h-overview">
+        <h2 id="h-overview">Activity</h2>
+        <dl class="facts">
+          <div><dt>Running for</dt><dd id="uptime">-</dd></div>
+          <div><dt>Requests, last hour</dt><dd id="lastHour">-</dd></div>
+          <div><dt>Requests since start</dt><dd id="total">-</dd></div>
+          <div><dt>Emby errors</dt><dd id="embyErrors">-</dd></div>
+        </dl>
+        <svg id="chart" class="chart" viewBox="0 0 240 48" role="img" aria-label="Requests per minute over the last hour"></svg>
+        <p class="muted small">Requests per minute, last 60 minutes.</p>
+        <p class="muted small" id="statusSplit"></p>
+      </article>
+
+      <article class="card" aria-labelledby="h-emby">
+        <h2 id="h-emby">Emby connection</h2>
+        <dl class="facts">
+          <div><dt>Emby server</dt><dd id="embyHost">-</dd></div>
+          <div><dt>Last check</dt><dd id="embyResult">Not checked yet</dd></div>
+        </dl>
+        <button id="checkEmby" type="button">Check connection</button>
+      </article>
+
+      <article class="card" aria-labelledby="h-people">
+        <h2 id="h-people">Logins and devices</h2>
+        <dl class="facts">
+          <div><dt>Saved logins</dt><dd id="logins">-</dd></div>
+          <div><dt>Play sessions remembered</dt><dd id="playSessions">-</dd></div>
+          <div><dt>Devices seen</dt><dd id="devices">-</dd></div>
+        </dl>
+        <p class="muted small">Counts of what the proxy remembers in memory so streams and logins keep working.</p>
+      </article>
+
+      <article class="card wide" aria-labelledby="h-settings">
+        <h2 id="h-settings">Settings</h2>
+        <p class="muted small">These take effect straight away and are kept after a restart.</p>
+        <form id="settingsForm">
+          <div class="field">
+            <label for="embyUrl">Emby server address</label>
+            <div class="input-row">
+              <input id="embyUrl" type="url" inputmode="url" placeholder="http://192.168.1.100:8096" autocomplete="off" spellcheck="false" required>
+              <button id="testEmby" type="button">Test</button>
+            </div>
+            <p id="embyTestMsg" class="note" role="status" hidden></p>
+            <p class="muted small">The Emby server this proxy talks to. It is only saved if an Emby server answers there. Changing it signs everyone out of Wholphin, and they log in again with their account on the new server.</p>
+          </div>
+          <div class="field">
+            <label for="streamMode">How video is delivered</label>
+            <select id="streamMode">
+              <option value="auto">Automatic (send the TV to Emby when possible)</option>
+              <option value="redirect">Always send the TV straight to Emby</option>
+              <option value="proxy">Always pass video through this proxy</option>
+            </select>
+          </div>
+          <div class="field check">
+            <input id="directPlayOnly" type="checkbox">
+            <label for="directPlayOnly">Direct play only <span class="muted">(never let Emby transcode for Wholphin)</span></label>
+          </div>
+          <div class="field">
+            <label for="reportedVersion">Jellyfin version shown to apps</label>
+            <input id="reportedVersion" type="text" inputmode="decimal" pattern="\d{1,2}\.\d{1,3}\.\d{1,3}" placeholder="10.10.7" required>
+            <p class="muted small">Raise it if Wholphin says the server version is not supported.</p>
+          </div>
+          <div class="field">
+            <label for="resumeFetchLimit">Continue Watching depth</label>
+            <input id="resumeFetchLimit" type="number" min="10" max="500" step="1" required>
+            <p class="muted small">How many in-progress and next-up items to read from Emby (10 to 500).</p>
+          </div>
+          <div class="field check">
+            <input id="debug" type="checkbox">
+            <label for="debug">Log every request <span class="muted">(logins and tokens are hidden)</span></label>
+          </div>
+          <p id="settingsMsg" class="note" role="status" hidden></p>
+          <button type="submit" class="primary">Save settings</button>
+        </form>
+      </article>
+
+      <article class="card wide" aria-labelledby="h-errors">
+        <div class="row-between">
+          <h2 id="h-errors">Recent problems</h2>
+          <button id="clearErrors" type="button">Clear</button>
+        </div>
+        <ul id="errors" class="errors"></ul>
+        <p id="noErrors" class="muted" hidden>Nothing to report.</p>
+      </article>
+
+      <article class="card wide" aria-labelledby="h-config">
+        <h2 id="h-config">Fixed settings</h2>
+        <dl class="facts">
+          <div><dt>Listening on</dt><dd id="listen">-</dd></div>
+          <div><dt>Proxy ID starts with</dt><dd id="serverId">-</dd></div>
+        </dl>
+        <p class="muted small">To change these, edit the <code>.env</code> file on the server and restart the proxy. The Emby address, listed in Settings above, can be changed from this page.</p>
+      </article>
+    </div>
+  </section>
+</main>
+<script src="app.js"></script>
+</body>
+</html>
