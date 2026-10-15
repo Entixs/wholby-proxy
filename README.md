@@ -311,7 +311,13 @@ and then open `http://localhost:8098` on your own computer. (With Docker, also p
 
 **How it is protected:** the password is hashed; logins are limited to 5 wrong tries per 15 minutes per address (and 30 overall); sessions expire after 12 hours; the page uses strict security headers and no inline scripts; and changes can only be made from the dashboard page itself.
 
-To put it on a real domain instead of using a tunnel, publish it through nginx on its own hostname, use HTTPS, and ideally restrict it to your own IP address. Never publish it on the same address customers use.
+**Using a domain instead of a tunnel.** You can publish the dashboard through nginx on its **own hostname** (for example `wholby-admin.example.com`), never on the address your customers use. `deploy/nginx-admin-site.conf` is a ready example: it adds HTTPS, a login limit, and passes the visitor's real address to the dashboard so the dashboard's own limit counts each visitor separately. Keep `ADMIN_HOST=127.0.0.1` so only nginx can reach the dashboard.
+
+A login page on the public internet is a bigger target than the tunnel, so also:
+
+* Use a **long password** (a passphrase of 20 or more characters). Run `npm run admin-password` again to change it.
+* Consider an extra layer in front: restrict it to your own address (the commented `allow` and `deny` lines in the example), or put it behind Cloudflare Access or another sign-in.
+* Know the trade-off: after 5 wrong tries the dashboard blocks that address for 15 minutes, and after 30 wrong tries from anywhere it blocks everyone for 15 minutes. People who are already logged in are not affected, but someone could keep you out of the login for a while.
 
 ---
 
