@@ -45,7 +45,7 @@ git clone https://github.com/YOUR_USERNAME/wholby-proxy.git
 
 cd wholby-proxy
 
-Next, copy the environment template and customize it:
+Next, copy the environment template and customize it (all options are documented in `.env.example`):
 
 cp .env.example .env
 
@@ -97,12 +97,17 @@ Q: The client connects, but images aren't loading.
 * Double-check your EMBY_URL in the .env file. Ensure there is no trailing slash (e.g., http://192.168.1.100:8096 is correct, http://192.168.1.100:8096/ is wrong).
 
 Q: Video playback fails.
-* The proxy automatically intercepts and redirects stream endpoints directly to Emby to ensure playback is handled natively without bottlenecks. Ensure the device running Wholphin can reach the Emby server's IP address directly on your network.
+* Direct-play streams are redirected straight to Emby when the client reaches the proxy over the same protocol as `EMBY_URL` (both https, or both http). Otherwise they are streamed through the proxy (`STREAM_MODE=auto`). Wholphin's player refuses an http -> https redirect, so a plain-HTTP proxy in front of an HTTPS Emby always streams through the proxy.
+* Wholphin fetches direct-play streams without credentials. The proxy remembers which user owns each play session and attaches that user's token, so no extra setup is needed.
+* If the device cannot reach Emby directly, set `STREAM_MODE=proxy`.
 
 Q: Is this proxy 100% functional?
-* Core video playback (Movies, TV Shows) works flawlessly. However, music playback is currently experimental and may yield mixed results, while photo libraries remain untested.
-* **Client Configuration Tip:** It is highly recommended to remove the broken "Next Up" row in your Wholphin client, as Emby automatically merges "Next Up" and "Continue Watching" into a single feed. 
-  * *To remove the row:* Navigate to the Left Nav Bar > Settings > Customize Home Screen > Settings > select **Reset Settings**. This will unhide the option allowing you to delete the row. You will need to perform this reset step anytime you wish to modify your home screen layout in the future. The settings do not translate between perfectly between Emby and Jellyfin so there will be jankiness like this.
+* Verified against Wholphin 1.0.8 on Android TV with an Emby 4.9 server: login, home screen (Continue Watching with Next Up), libraries, genres, studios, filters (played, favorites, genre, studio, rating, year, decade), sorting, A-Z jump, search, item pages, favorites, watched state, direct play, HLS transcoding, subtitles, audio track selection, seeking and playback progress.
+* Not verified: music, photos, Live TV (reported as disabled), playlist creation (see below), multi-user and multi-server setups.
+* Playlist creation is translated from Jellyfin's JSON body to Emby's query parameters, but could not be confirmed because the Emby server used for testing hung on every playlist request.
+
+Q: What do the extra files do?
+* `data/tokens.json` keeps saved sessions so users stay logged in across proxy restarts. `data/displayprefs.json` stores Wholphin's home-screen layout. Mount `./data` as a volume in Docker (the compose file does).
 
 Q: Will this proxy require ongoing maintenance?
 * The proxy's stability depends on Emby and Jellyfin's core APIs remaining relatively consistent. A major upstream update to either platform could temporarily break compatibility. This project is provided as-is, and community forks, pull requests, and contributions to patch future breaks are highly encouraged!
@@ -114,3 +119,26 @@ Q: Will this proxy require ongoing maintenance?
 * Created specifically to bridge Emby backends with the Wholphin client ecosystem.
 * Built using Express and http-proxy-middleware.
 * Developed with the assistance of AI tools. Or the other way around, really... I basically gave the AI emotional support.
+
+
+---
+
+## Development
+
+* `npm test` runs the unit tests (path translation, query cleanup, Resume and Next Up splitting, display preferences, and more).
+* `node tools/contract-check.js` logs in through a running proxy, calls the endpoints Jellyfin clients use, and validates every JSON response against Jellyfin's published OpenAPI schema. A violation here is a crash or a blank screen in strict clients such as Wholphin.
+
+  ```
+  PROXY_URL=http://localhost:8096 EMBY_USER=name EMBY_PASS=password node tools/contract-check.js
+  ```
+  Use `STRICT=1` to also list every non-nullable property that Emby omits.
+
+### Known Emby / Jellyfin differences the proxy handles
+
+* `AiredEpisodeOrder`, `Default` and `VideoBitRate` sort keys (Emby answers 500).
+* `fillWidth` / `fillHeight` image parameters (Emby ignores them and sends full-size images), mapped to `maxWidth` / `maxHeight`.
+* `/Years`, `/Items/Filters`, `/Search/Hints` shapes, and name-only lists lacking `Id` and `Type`.
+* Favorite / watched responses lacking `Key` and `ItemId`; `DatePlayed` format; `streamOptions` parameter.
+* Emby `Attachment` streams, `MediaSourceId` strings such as `mediasource_123`, un-dashed policy folder ids.
+* Jellyfin 10.9+ routes (`/UserItems`, `/UserPlayedItems`, `/UserFavoriteItems`, `/UserViews`) and `/MediaSegments`.
+* Websocket `/socket` is forwarded to Emby's `/embywebsocket`.
