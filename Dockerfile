@@ -1,6 +1,10 @@
-FROM node:18-alpine
+FROM node:22-alpine
 WORKDIR /app
-COPY package.json server.js ./
-RUN npm install
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+COPY server.js ./
+# Sessions and display preferences are stored here; mount a volume so they survive container rebuilds.
+ENV TOKEN_FILE=/app/data/tokens.json
+VOLUME /app/data
 EXPOSE 8096
 CMD ["node", "server.js"]

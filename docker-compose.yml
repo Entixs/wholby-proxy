@@ -7,6 +7,9 @@ services:
       - "8096:8096"
     env_file:
       - .env
-    # Optional: If running on the same machine as Emby, 
+    volumes:
+      # Saved sessions (so users stay logged in across restarts) and Wholphin display preferences.
+      - ./data:/app/data
+    # Optional: If running on the same machine as Emby,
     # setting network_mode to host can resolve routing issues.
     # network_mode: "host"
