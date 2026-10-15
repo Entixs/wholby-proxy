@@ -17,6 +17,9 @@ const PORT = parseInt(process.env.PORT, 10) || 8096;
 const STREAM_MODE = (process.env.STREAM_MODE || 'auto').toLowerCase();
 const DEBUG = process.env.DEBUG === 'true';
 // Jellyfin version reported to clients. Wholphin refuses servers older than its SDK's minimum.
+// Wholphin clients only direct play: PlaybackInfo always reports direct play and transcode requests are refused,
+// so Emby never spends CPU transcoding for them. Set DIRECT_PLAY_ONLY=false to allow transcoding.
+const DIRECT_PLAY_ONLY = (process.env.DIRECT_PLAY_ONLY || 'true').toLowerCase() !== 'false';
 const REPORTED_VERSION = process.env.REPORTED_VERSION || '10.10.7';
 // Emby merges "Next Up" into "Continue Watching". We fetch this many from Emby, then split and trim per request.
 const RESUME_FETCH_LIMIT = parseInt(process.env.RESUME_FETCH_LIMIT, 10) || 100;
@@ -68,6 +71,7 @@ const setToken = (token, uid) => {
 // credentials (Jellyfin serves those anonymously, Emby answers 401), so we attach the session owner's token.
 const MAX_PLAY_SESSIONS = 2000;
 const playSessionToken = new Map();
+const deviceToken = new Map();
 const rememberPlaySession = (playSessionId, token) => {
     if (!playSessionId || !token) return;
     playSessionToken.delete(playSessionId);
@@ -88,8 +92,71 @@ const tokenFromRequest = (rawUrl, headers) => {
 const resolveStreamToken = (rawUrl, headers) => {
     if (tokenFromRequest(rawUrl, headers)) return null;
     const qp = new URL(rawUrl, 'http://localhost').searchParams;
-    for (const [k, v] of qp) if (k.toLowerCase() === 'playsessionid') return playSessionToken.get(v) || null;
+    for (const [k, v] of qp) if (k.toLowerCase() === 'playsessionid' && playSessionToken.has(v)) return playSessionToken.get(v);
+    for (const [k, v] of qp) if (k.toLowerCase() === 'deviceid' && deviceToken.has(v)) return deviceToken.get(v);
     return null;
+};
+
+// Request side: ask Emby for a direct-play answer and never a transcode.
+const forceDirectPlayRequest = (body) => {
+    if (!body || typeof body !== 'object') return body;
+    body.EnableDirectPlay = true;
+    body.EnableDirectStream = true;
+    body.EnableTranscoding = false;
+    body.AllowVideoStreamCopy = true;
+    body.AllowAudioStreamCopy = true;
+    delete body.MaxStreamingBitrate;
+    return body;
+};
+
+// Response side: whatever Emby decided, report every source as directly playable and drop transcode URLs.
+const forceDirectPlayResponse = (data) => {
+    if (!data || !Array.isArray(data.MediaSources)) return data;
+    for (const ms of data.MediaSources) {
+        if (!ms) continue;
+        ms.SupportsDirectPlay = true;
+        ms.SupportsDirectStream = true;
+        ms.SupportsTranscoding = false;
+        delete ms.TranscodingUrl;
+        delete ms.TranscodingSubProtocol;
+        delete ms.TranscodingContainer;
+    }
+    return data;
+};
+
+// Wholphin plays music and theme songs through /Audio/<id>/universal, which transcodes when the file's container is not in
+// the client's list. In direct-play-only mode serve the raw file instead (static stream).
+const KEEP_FOR_STATIC_AUDIO = new Set(['api_key', 'apikey', 'token', 'userid', 'deviceid', 'playsessionid', 'mediasourceid', 'tag']);
+const rewriteUniversalAudio = (rawUrl) => {
+    const [base, query = ''] = rawUrl.split(/\?(.*)/s);
+    const m = base.match(/^(\/(?:emby\/)?Audio\/[^/]+)\/universal$/i);
+    if (!m) return null;
+    const qp = new URLSearchParams();
+    for (const [k, v] of new URLSearchParams(query)) if (KEEP_FOR_STATIC_AUDIO.has(k.toLowerCase())) qp.append(k, v);
+    qp.set('static', 'true');
+    return `${m[1]}/stream?${qp.toString()}`;
+};
+
+// DeviceId -> access token, learned from authenticated requests, for streams fetched by clients that send no credentials.
+const rememberDevice = (headers) => {
+    const h = headers['x-emby-authorization'] || headers['authorization'] || '';
+    const token = (h.match(/Token="([^"]+)"/i) || [])[1];
+    const device = (h.match(/DeviceId="([^"]+)"/i) || [])[1];
+    if (!token || !device) return;
+    deviceToken.delete(device);
+    deviceToken.set(device, token);
+    if (deviceToken.size > MAX_PLAY_SESSIONS) deviceToken.delete(deviceToken.keys().next().value);
+};
+
+// Requests that would make Emby transcode: HLS playlists/segments, and video streams that are not static.
+const isTranscodeRequest = (rawUrl) => {
+    const [base, query = ''] = rawUrl.split(/\?(.*)/s);
+    if (/\/(master|main|live)\.m3u8$/i.test(base) || /\/hls1?\//i.test(base)) return true;
+    if (/^\/(emby\/)?(Videos|Audio)\/[^/]+\/(stream|universal)(\.[a-z0-9]+)?$/i.test(base)) {
+        const isStatic = [...new URLSearchParams(query)].some(([k, v]) => k.toLowerCase() === 'static' && v.toLowerCase() === 'true');
+        return !isStatic;
+    }
+    return false;
 };
 
 // Never log credentials that travel in the query string.
@@ -377,6 +444,24 @@ const deepPatch = (obj, parentId = "") => {
 app.use((req, res, next) => {
     if (req.method === 'GET' && asksOnlyForJellyTypes(req.url)) {
         return res.json({ Items: [], TotalRecordCount: 0, StartIndex: 0 });
+    }
+    next();
+});
+
+// Direct-play-only: music and theme songs use /Audio/<id>/universal; serve the raw file instead of transcoding.
+app.use((req, res, next) => {
+    rememberDevice(req.headers);
+    if (DIRECT_PLAY_ONLY && req.method === 'GET') {
+        const rewritten = rewriteUniversalAudio(req.url);
+        if (rewritten) req.url = req.originalUrl = rewritten; // http-proxy-middleware re-reads originalUrl
+    }
+    next();
+});
+
+// Direct-play-only: refuse anything that would start a transcode.
+app.use((req, res, next) => {
+    if (DIRECT_PLAY_ONLY && req.method === 'GET' && isTranscodeRequest(req.url)) {
+        return res.status(403).json({ message: 'Transcoding is disabled on this server; the file must be played directly.' });
     }
     next();
 });
@@ -851,6 +936,12 @@ const proxyReqUnsafe = (proxyReq, req) => {
     if (DEBUG) console.log(`[Emby Bound]     -> ${req.method} ${redact(newPath)}`);
     // Jellyfin's GET /UserItems/<id>/UserData does not exist on Emby; read the item and return its UserData.
     let finalPath = newPath;
+    if (DIRECT_PLAY_ONLY && req.method === 'POST' && /\/Items\/[^/]+\/PlaybackInfo/i.test(req.url) && req.body && typeof req.body === 'object') {
+        forceDirectPlayRequest(req.body);
+        const qp = new URLSearchParams(finalPath.split('?')[1] || '');
+        for (const [k] of [...qp]) if (/^(enabletranscoding|enabledirectplay|enabledirectstream|maxstreamingbitrate)$/i.test(k)) qp.delete(k);
+        finalPath = finalPath.split('?')[0] + (qp.toString() ? '?' + qp.toString() : '');
+    }
     if (req.method === 'GET' && /^\/emby\/Users\/[^/]+\/Items\/[^/?]+\/UserData(\?|$)/i.test(finalPath)) {
         finalPath = finalPath.replace(/\/UserData/i, '');
         req.wholbyUnwrap = 'UserData';
@@ -940,6 +1031,8 @@ const jsonProxy = createProxyMiddleware({
                     return Buffer.from(JSON.stringify(data)); 
                 }
 
+                if (DIRECT_PLAY_ONLY && /\/PlaybackInfo/i.test(req.url)) forceDirectPlayResponse(data);
+
                 if (data.PlaySessionId && /\/PlaybackInfo/i.test(req.url)) {
                     rememberPlaySession(data.PlaySessionId, tokenFromRequest(req.url, req.headers));
                 }
@@ -1024,4 +1117,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { normalizeUserData, asksOnlyForJellyTypes, app, rememberPlaySession, resolveStreamToken, shouldRedirect, planSplit, splitItems, resumeQuery, toUUID, deflateUUID, deflatePath, cleanQuery, rewriteRoute, transformPath, isBinaryPath, redact };
+module.exports = { rewriteUniversalAudio, rememberDevice, forceDirectPlayRequest, forceDirectPlayResponse, isTranscodeRequest, normalizeUserData, asksOnlyForJellyTypes, app, rememberPlaySession, resolveStreamToken, shouldRedirect, planSplit, splitItems, resumeQuery, toUUID, deflateUUID, deflatePath, cleanQuery, rewriteRoute, transformPath, isBinaryPath, redact };
