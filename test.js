@@ -5,7 +5,7 @@ process.env.TOKEN_FILE = path.join(tmp, 'tokens.json');
 process.env.DISPLAY_PREFS_FILE = path.join(tmp, 'displayprefs.json');
 const test = require('node:test');
 const assert = require('node:assert');
-const { normalizeUserData, asksOnlyForJellyTypes, app, rememberPlaySession, resolveStreamToken, shouldRedirect, planSplit, splitItems, toUUID, deflateUUID, transformPath, isBinaryPath, redact } = require('./server');
+const { rewriteUniversalAudio, rememberDevice, forceDirectPlayRequest, forceDirectPlayResponse, isTranscodeRequest, normalizeUserData, asksOnlyForJellyTypes, app, rememberPlaySession, resolveStreamToken, shouldRedirect, planSplit, splitItems, toUUID, deflateUUID, transformPath, isBinaryPath, redact } = require('./server');
 
 const UID = '1a2b3c';
 
@@ -208,4 +208,46 @@ test('favorite/played responses get the Key and ItemId Jellyfin clients require'
     assert.strictEqual(out.ItemId, 'ffffffff-0000-0000-0000-000001640973');
     assert.strictEqual(out.IsFavorite, true);
     assert.deepStrictEqual(normalizeUserData({ foo: 1 }, '5'), { foo: 1 });
+});
+
+test('direct-play-only: PlaybackInfo is forced to direct play and loses transcode URLs', () => {
+    const req = forceDirectPlayRequest({ EnableTranscoding: true, EnableDirectPlay: false, MaxStreamingBitrate: 2000000, DeviceProfile: {} });
+    assert.strictEqual(req.EnableTranscoding, false);
+    assert.strictEqual(req.EnableDirectPlay, true);
+    assert.ok(!('MaxStreamingBitrate' in req));
+    const res = forceDirectPlayResponse({ MediaSources: [{ SupportsDirectPlay: false, SupportsTranscoding: true, TranscodingUrl: '/videos/1/master.m3u8', TranscodingContainer: 'ts' }] });
+    assert.strictEqual(res.MediaSources[0].SupportsDirectPlay, true);
+    assert.strictEqual(res.MediaSources[0].SupportsTranscoding, false);
+    assert.ok(!('TranscodingUrl' in res.MediaSources[0]) && !('TranscodingContainer' in res.MediaSources[0]));
+});
+
+test('direct-play-only: transcode requests are recognised, direct streams are not', () => {
+    assert.ok(isTranscodeRequest('/videos/1/master.m3u8?x=1'));
+    assert.ok(isTranscodeRequest('/videos/1/main.m3u8'));
+    assert.ok(isTranscodeRequest('/videos/1/hls1/main/0.ts'));
+    assert.ok(isTranscodeRequest('/Videos/1/stream?mediaSourceId=a'));
+    assert.ok(isTranscodeRequest('/Audio/1/universal?x=1'));
+    assert.ok(!isTranscodeRequest('/Videos/1/stream?static=true&mediaSourceId=a'));
+    assert.ok(!isTranscodeRequest('/Items/1/Images/Primary'));
+    assert.ok(!isTranscodeRequest('/Videos/1/ms/Subtitles/2/0/Stream.srt'));
+});
+
+test('direct-play-only: universal audio becomes a static stream and keeps only identifying parameters', () => {
+    const out = rewriteUniversalAudio('/Audio/ffffffff-0000-0000-0000-000000000042/universal?container=mp3,aac&transcodingContainer=mka&maxAudioChannels=6&api_key=T&userId=U&deviceId=D');
+    const [path, query] = out.split('?');
+    assert.strictEqual(path, '/Audio/ffffffff-0000-0000-0000-000000000042/stream');
+    const q = new URLSearchParams(query);
+    assert.strictEqual(q.get('static'), 'true');
+    assert.strictEqual(q.get('api_key'), 'T');
+    assert.strictEqual(q.get('deviceId'), 'D');
+    assert.ok(!q.has('container') && !q.has('transcodingContainer') && !q.has('maxAudioChannels'));
+    assert.strictEqual(rewriteUniversalAudio('/Videos/1/stream?static=true'), null);
+    assert.ok(!isTranscodeRequest(out));
+});
+
+test('token-less requests fall back to the token last seen for their DeviceId', () => {
+    rememberDevice({ authorization: 'MediaBrowser Client="Wholphin", Device="TV", DeviceId="dev-1", Version="1", Token="TOK-1"' });
+    assert.strictEqual(resolveStreamToken('/Audio/5/stream?static=true&deviceId=dev-1', {}), 'TOK-1');
+    assert.strictEqual(resolveStreamToken('/Audio/5/stream?static=true&deviceId=other', {}), null);
+    assert.strictEqual(resolveStreamToken('/Audio/5/stream?static=true&deviceId=dev-1&api_key=X', {}), null);
 });

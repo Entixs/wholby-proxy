@@ -96,6 +96,9 @@ Log in using your normal Emby username and password. The proxy will handle the r
 Q: The client connects, but images aren't loading.
 * Double-check your EMBY_URL in the .env file. Ensure there is no trailing slash (e.g., http://192.168.1.100:8096 is correct, http://192.168.1.100:8096/ is wrong).
 
+Q: Can Emby transcode for Wholphin users?
+* No, by default. `DIRECT_PLAY_ONLY=true` forces every file to direct play: the proxy tells the client each source is directly playable, removes transcode URLs, and answers HLS and non-static stream requests with 403. A file the TV cannot decode will fail to play instead of being transcoded. Music and theme songs (which Wholphin requests through `/Audio/<id>/universal`) are served as the raw file the same way; if a client sends no credentials, the proxy uses the token last seen for its `DeviceId`. Set `DIRECT_PLAY_ONLY=false` to allow transcoding (those streams then pass through the proxy).
+
 Q: Video playback fails.
 * Direct-play streams are redirected straight to Emby when the client reaches the proxy over the same protocol as `EMBY_URL` (both https, or both http). Otherwise they are streamed through the proxy (`STREAM_MODE=auto`). Wholphin's player refuses an http -> https redirect, so a plain-HTTP proxy in front of an HTTPS Emby always streams through the proxy.
 * Wholphin fetches direct-play streams without credentials. The proxy remembers which user owns each play session and attaches that user's token, so no extra setup is needed.
