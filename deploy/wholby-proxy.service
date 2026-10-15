@@ -1,0 +1,22 @@
+[Unit]
+Description=Wholby Proxy (Emby to Jellyfin API translation for Wholphin)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=youruser
+WorkingDirectory=/home/youruser/wholby-proxy
+EnvironmentFile=/home/youruser/wholby-proxy/.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node /home/youruser/wholby-proxy/server.js
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/youruser/wholby-proxy/data
+
+[Install]
+WantedBy=multi-user.target
