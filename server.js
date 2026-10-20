@@ -836,7 +836,8 @@ const rewriteRoute = (newPath, userId) => {
         const query = newPath.split('?')[1] || '';
         return `/Users/${userId}/Items?ParentId=${m[1]}&Recursive=true&Fields=BasicSyncInfo,CanDelete${query ? '&' + query : ''}`;
     }
-    if (new RegExp(`^/Items/${ID}/PlaybackInfo`, 'i').test(newPath)) {
+    // Emby leaves UserData out of these lists unless UserId is given; Jellyfin clients leave it off.
+    if (new RegExp(`^/Items/${ID}/PlaybackInfo|^/Shows/${ID}/(Episodes|Seasons)`, 'i').test(newPath)) {
         const [base, query = ''] = newPath.split(/\?(.*)/s);
         return base + '?' + (/userid=/i.test(query) ? query : (query ? query + '&' : '') + `UserId=${userId}`);
     }

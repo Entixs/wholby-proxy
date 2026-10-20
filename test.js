@@ -75,6 +75,9 @@ test('single item and per-user sub-routes go under /Users, global sub-routes do 
     assert.strictEqual(transformPath(`/Items/${id}/Intros`, UID), `/emby/Users/${UID}/Items/4242/Intros`);
     assert.strictEqual(transformPath(`/Items/${id}/Similar?limit=5`, UID), `/emby/Items/4242/Similar?limit=5`);
     assert.strictEqual(transformPath(`/Items/${id}/PlaybackInfo`, UID), `/emby/Items/4242/PlaybackInfo?UserId=${UID}`);
+    assert.strictEqual(transformPath(`/Shows/${id}/Episodes?limit=1`, UID), `/Shows/4242/Episodes?limit=1&UserId=${UID}`);
+    assert.strictEqual(transformPath(`/Shows/${id}/Seasons`, UID), `/Shows/4242/Seasons?UserId=${UID}`);
+    assert.strictEqual(transformPath(`/Shows/${id}/Episodes?userId=${UID}`, UID), `/Shows/4242/Episodes?userId=${UID}`);
 });
 
 test('query cleanup removes Jellyfin-only values and joins repeated keys', () => {
