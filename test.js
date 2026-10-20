@@ -251,3 +251,9 @@ test('token-less requests fall back to the token last seen for their DeviceId', 
     assert.strictEqual(resolveStreamToken('/Audio/5/stream?static=true&deviceId=other', {}), null);
     assert.strictEqual(resolveStreamToken('/Audio/5/stream?static=true&deviceId=dev-1&api_key=X', {}), null);
 });
+
+test('played items always report a PlayCount of at least 1', () => {
+    assert.strictEqual(normalizeUserData({ Played: true, PlayCount: 0, PlaybackPositionTicks: 0 }, '7').PlayCount, 1);
+    assert.strictEqual(normalizeUserData({ Played: false, PlayCount: 0, PlaybackPositionTicks: 0 }, '7').PlayCount, 0);
+    assert.strictEqual(normalizeUserData({ Played: true, PlayCount: 3, PlaybackPositionTicks: 0 }, '7').PlayCount, 3);
+});

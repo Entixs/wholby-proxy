@@ -431,6 +431,7 @@ const normalizeUserData = (data, rawItemId) => {
     data.PlaybackPositionTicks = data.PlaybackPositionTicks || 0;
     data.IsFavorite = Boolean(data.IsFavorite);
     data.Played = data.Played !== undefined ? Boolean(data.Played) : data.PlayCount > 0;
+    if (data.Played && !data.PlayCount) data.PlayCount = 1;
     data.Key = data.Key || String(rawItemId);
     data.ItemId = toUUID(data.ItemId || rawItemId);
     return data;
@@ -557,6 +558,7 @@ const deepPatch = (obj, parentId = "") => {
                 u.Key = u.Key || fallbackId;
                 u.ItemId = toUUID(u.ItemId || fallbackId);
                 if (u.Played === undefined) u.Played = (u.PlayCount > 0);
+                if (u.Played && !u.PlayCount) u.PlayCount = 1;
             }
         };
         if (obj.UserData) fixUserData(obj.UserData, currentId);
