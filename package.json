@@ -1,6 +1,6 @@
 {
   "name": "wholby-proxy",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "description": "Emby to Jellyfin translation proxy layer",
   "main": "server.js",
   "dependencies": {
