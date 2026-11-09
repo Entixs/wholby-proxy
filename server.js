@@ -1171,7 +1171,7 @@ const jsonProxy = createProxyMiddleware({
         if (proxyRes.headers['content-type']?.includes('application/json')) {
             try {
                 // Some Emby files (manifests, localization strings) start with a UTF-8 BOM, which JSON.parse rejects.
-                let data = JSON.parse(responseBuffer.toString('utf8').replace(/^﻿/, ''));
+                let data = JSON.parse(responseBuffer.toString('utf8').replace(/^\uFEFF/, ''));
 
                 if (req.url.match(/\/System\/Info\/Public/i)) {
                     data.Id = PROXY_SERVER_ID;
