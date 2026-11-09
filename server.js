@@ -284,6 +284,31 @@ const isTranscodeRequest = (rawUrl) => {
 // Never log credentials that travel in the query string.
 const redact = (url) => String(url).replace(/([?&](?:api_key|apikey|token|accesstoken)=)[^&]*/ig, '$1***');
 
+// Short, credential-free label for the client behind a request, for log lines: app, device name, DeviceId.
+const describeClient = (headers = {}, rawUrl = '') => {
+    const h = headers['x-emby-authorization'] || headers['authorization'] || '';
+    const field = (name) => (h.match(new RegExp(`${name}="([^"]*)"`, 'i')) || [])[1];
+    let device = field('DeviceId');
+    if (!device) {
+        const q = String(rawUrl).split('?')[1] || '';
+        for (const [k, v] of new URLSearchParams(q)) if (k.toLowerCase() === 'deviceid') device = v;
+    }
+    const parts = [field('Client'), field('Device')].filter(Boolean).join(' / ');
+    const label = [parts, device && `id ${device}`].filter(Boolean).join(', ');
+    return (label || 'unknown client').replace(/[\r\n]/g, ' ').slice(0, 120);
+};
+
+// Log an identical upstream error at most once per window; the next logged line says how many were skipped.
+const ERROR_LOG_WINDOW_MS = 10 * 60 * 1000;
+const errorThrottle = new Map();
+const throttleError = (key, now = Date.now()) => {
+    const seen = errorThrottle.get(key);
+    if (seen && now - seen.at < ERROR_LOG_WINDOW_MS) { seen.skipped += 1; return null; }
+    errorThrottle.set(key, { at: now, skipped: 0 });
+    if (errorThrottle.size > 500) errorThrottle.delete(errorThrottle.keys().next().value);
+    return seen ? seen.skipped : 0;
+};
+
 // --- Express Body Parser ---
 app.use((req, res, next) => { countRequest(res); next(); });
 app.use(express.json({ limit: '10mb' }));
@@ -1121,9 +1146,14 @@ const jsonProxy = createProxyMiddleware({
         const isJson = proxyRes.headers['content-type']?.includes('application/json');
 
         if (proxyRes.statusCode >= 400) {
-            console.error(`[Emby Error] ${proxyRes.statusCode} ${req.method} ${redact(req.url)}`);
             stats.embyErrors += 1;
-            noteError(`[Emby Error] ${proxyRes.statusCode} ${req.method} ${req.url}`);
+            const client = describeClient(req.headers, req.url);
+            const skipped = throttleError(`${proxyRes.statusCode} ${req.method} ${req.url.split('?')[0]} ${client}`);
+            if (skipped !== null) {
+                const line = `[Emby Error] ${proxyRes.statusCode} ${req.method} ${redact(req.url)} (${client})${skipped ? ` [+${skipped} identical in last 10 min]` : ''}`;
+                console.error(line);
+                noteError(line);
+            }
             // Emby answers some Jellyfin-only list queries with a 5xx; show an empty list instead of failing the screen.
             // Auth and client errors (4xx) are passed through so logins and lookups fail honestly.
             if (isJson && proxyRes.statusCode >= 500 && req.method === 'GET') {
@@ -1228,6 +1258,24 @@ const wsProxy = createProxyMiddleware({
     ws: true,
     pathRewrite: { '^/socket': '/embywebsocket' },
     onError,
+    // TCP keepalive on both legs, and a close log that says who hung up first and after how long.
+    // (App-level pings are not injected: the sockets are piped raw, so a ping could land mid-frame.)
+    onProxyReqWs: (proxyReq, req, socket) => {
+        const started = Date.now();
+        const client = describeClient(req.headers, req.url);
+        let closedBy = null;
+        const closed = (side) => {
+            if (closedBy) return;
+            closedBy = side;
+            console.log(`[WS] closed by ${side} after ${Math.round((Date.now() - started) / 1000)}s (${client})`);
+        };
+        socket.setKeepAlive(true, 15000);
+        socket.on('close', () => closed('client'));
+        proxyReq.on('upgrade', (res, proxySocket) => {
+            proxySocket.setKeepAlive(true, 15000);
+            proxySocket.on('close', () => closed('upstream'));
+        });
+    },
 });
 app.use('/socket', wsProxy);
 
@@ -1266,4 +1314,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { parseEmbyUrl, settings, validateSettings, applySettings, stats, recentErrors, rewriteUniversalAudio, rememberDevice, forceDirectPlayRequest, forceDirectPlayResponse, isTranscodeRequest, normalizeUserData, asksOnlyForJellyTypes, app, rememberPlaySession, resolveStreamToken, shouldRedirect, planSplit, splitItems, resumeQuery, toUUID, deflateUUID, deflatePath, cleanQuery, rewriteRoute, transformPath, isBinaryPath, redact };
+module.exports = { parseEmbyUrl, settings, validateSettings, applySettings, stats, recentErrors, rewriteUniversalAudio, rememberDevice, forceDirectPlayRequest, forceDirectPlayResponse, isTranscodeRequest, normalizeUserData, asksOnlyForJellyTypes, app, rememberPlaySession, resolveStreamToken, shouldRedirect, planSplit, splitItems, resumeQuery, toUUID, deflateUUID, deflatePath, cleanQuery, rewriteRoute, transformPath, isBinaryPath, redact, describeClient, throttleError };
