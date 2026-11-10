@@ -5,7 +5,7 @@ process.env.TOKEN_FILE = path.join(tmp, 'tokens.json');
 process.env.DISPLAY_PREFS_FILE = path.join(tmp, 'displayprefs.json');
 const test = require('node:test');
 const assert = require('node:assert');
-const { rewriteUniversalAudio, rememberDevice, forceDirectPlayRequest, forceDirectPlayResponse, isTranscodeRequest, normalizeUserData, asksOnlyForJellyTypes, app, rememberPlaySession, resolveStreamToken, shouldRedirect, planSplit, splitItems, toUUID, deflateUUID, transformPath, isBinaryPath, redact } = require('./server');
+const { rewriteUniversalAudio, rememberDevice, forceDirectPlayRequest, forceDirectPlayResponse, isTranscodeRequest, normalizeUserData, asksOnlyForJellyTypes, app, rememberPlaySession, resolveStreamToken, shouldRedirect, planSplit, splitItems, toUUID, deflateUUID, transformPath, isBinaryPath, redact, describeClient, throttleError } = require('./server');
 
 const UID = '1a2b3c';
 
@@ -259,4 +259,21 @@ test('played items always report a PlayCount of at least 1', () => {
     assert.strictEqual(normalizeUserData({ Played: true, PlayCount: 0, PlaybackPositionTicks: 0 }, '7').PlayCount, 1);
     assert.strictEqual(normalizeUserData({ Played: false, PlayCount: 0, PlaybackPositionTicks: 0 }, '7').PlayCount, 0);
     assert.strictEqual(normalizeUserData({ Played: true, PlayCount: 3, PlaybackPositionTicks: 0 }, '7').PlayCount, 3);
+});
+
+test('describeClient names the app and device but never the token', () => {
+    const out = describeClient({ authorization: 'MediaBrowser Client="Emby for Android", Device="Fire TV", DeviceId="abc123", Version="1", Token="SECRET"' }, '/Sync/data');
+    assert.strictEqual(out, 'Emby for Android / Fire TV, id abc123');
+    assert.ok(!out.includes('SECRET'));
+    assert.strictEqual(describeClient({}, '/socket?api_key=K&deviceId=dev9'), 'id dev9');
+    assert.strictEqual(describeClient({}, '/x'), 'unknown client');
+});
+
+test('throttleError logs the first error, skips repeats, then reports the skipped count', () => {
+    const t = 1_000_000;
+    assert.strictEqual(throttleError('k1', t), 0);
+    assert.strictEqual(throttleError('k1', t + 1000), null);
+    assert.strictEqual(throttleError('k1', t + 2000), null);
+    assert.strictEqual(throttleError('k1', t + 11 * 60 * 1000), 2);
+    assert.strictEqual(throttleError('k2', t), 0);
 });
