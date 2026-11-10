@@ -331,6 +331,12 @@ git pull
 docker compose up -d --build
 ```
 
+**Updating from a version that ran as root?** The container now runs as the unprivileged `node` user (uid 1000). Your `./data` folder may still be owned by root, and then wholby can't save logins or settings. Fix it once, before you update:
+
+```
+sudo chown -R 1000:1000 ./data
+```
+
 Without Docker:
 
 ```
@@ -382,6 +388,7 @@ After changing `.env`, restart the proxy.
 | Login fails with "too many requests" | The login limit (10 a minute per address) was hit. Wait a minute |
 | Pictures are missing | Check `EMBY_URL`: it must be correct with no slash at the end |
 | Video won't play | The TV may not be able to reach Emby directly: set `STREAM_MODE=proxy`. Or the file's format isn't supported by the TV (direct-play-only mode never transcodes) |
+| The log says `EACCES: permission denied` for `data/` (Docker) | The `data` folder is owned by root. Run `sudo chown -R 1000:1000 ./data` and restart |
 | You get logged out after every restart | Make sure the `data` folder is kept. With Docker, the `./data:/app/data` line in `docker-compose.yml` must stay |
 | The Continue Watching row is empty | It shows what the user has started or what comes next in shows they watch. Watch something first |
 
