@@ -5,7 +5,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wholby-admin-test-'));
 process.env.TOKEN_FILE = path.join(tmp, 'tokens.json'); // settings.json and admin.json live next to it
 const test = require('node:test');
 const assert = require('node:assert');
-const { hashPassword, verifyPassword, signSession, verifySession, savePassword, readAdminRecord, createAdminApp } = require('./admin');
+const { hashPassword, verifyPassword, signSession, verifySession, savePassword, readAdminRecord, revokeSessions, createAdminApp } = require('./admin');
 const http = require('node:http');
 const server = require('./server');
 
@@ -80,7 +80,7 @@ const startAdmin = async () => {
         let json; try { json = await res.json(); } catch { /* not JSON */ }
         return { status: res.status, json, headers: res.headers, ctx };
     };
-    return { ctx, dataDir, http, call, close: () => http.close() };
+    return { ctx, dataDir, http, call, getCookie: () => cookie, setCookie: (c) => { cookie = c; }, close: () => http.close() };
 };
 
 test('dashboard: nothing works before a password exists', async () => {
@@ -281,4 +281,28 @@ test('changing the Emby server signs everyone out, but loading saved settings at
     } finally {
         Object.assign(server.settings, before);
     }
+});
+
+test('verifySession rejects sessions issued before validAfter', () => {
+    const cookie = signSession('s', 5000);
+    assert.ok(verifySession('s', cookie, 6000, 0));
+    assert.ok(verifySession('s', cookie, 6000, 4999));
+    assert.ok(!verifySession('s', cookie, 6000, 5000));
+    assert.ok(!verifySession('s', cookie, 6000, 9000));
+});
+
+test('dashboard: logout revokes the session cookie itself, not just the browser copy', async () => {
+    const a = await startAdmin();
+    try {
+        savePassword(a.dataDir, 'a-very-long-password');
+        await a.call('POST', '/api/login', { password: 'a-very-long-password' });
+        const stolen = a.getCookie();
+        assert.strictEqual((await a.call('GET', '/api/status')).status, 200);
+        await a.call('POST', '/api/logout', {});
+        a.setCookie(stolen); // replay the old cookie
+        assert.strictEqual((await a.call('GET', '/api/status')).status, 401);
+        await new Promise((r) => setTimeout(r, 5));
+        await a.call('POST', '/api/login', { password: 'a-very-long-password' });
+        assert.strictEqual((await a.call('GET', '/api/status')).status, 200, 'a new login works after logout');
+    } finally { a.close(); }
 });
