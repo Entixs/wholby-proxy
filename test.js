@@ -5,7 +5,7 @@ process.env.TOKEN_FILE = path.join(tmp, 'tokens.json');
 process.env.DISPLAY_PREFS_FILE = path.join(tmp, 'displayprefs.json');
 const test = require('node:test');
 const assert = require('node:assert');
-const { rewriteUniversalAudio, rememberDevice, forceDirectPlayRequest, forceDirectPlayResponse, isTranscodeRequest, normalizeUserData, asksOnlyForJellyTypes, app, rememberPlaySession, resolveStreamToken, shouldRedirect, planSplit, splitItems, toUUID, deflateUUID, transformPath, isBinaryPath, redact, describeClient, throttleError, patchUser } = require('./server');
+const { rewriteUniversalAudio, rememberDevice, forceDirectPlayRequest, forceDirectPlayResponse, isTranscodeRequest, normalizeUserData, asksOnlyForJellyTypes, app, rememberPlaySession, resolveStreamToken, shouldRedirect, planSplit, splitItems, toUUID, deflateUUID, transformPath, isBinaryPath, redact, describeClient, throttleError, patchUser, socketPath } = require('./server');
 
 const UID = '1a2b3c';
 
@@ -301,4 +301,16 @@ test('patchUser copes with a user that has no Configuration', () => {
     const out = patchUser({ Id: '7' });
     assert.ok(out.Configuration);
     assert.ok(Array.isArray(out.Policy.EnabledFolders));
+});
+
+test('socketPath rewrites /socket and adds api_key and deviceId from the Authorization header', () => {
+    const headers = { authorization: 'MediaBrowser Client="Wholphin", Device="TV", DeviceId="dev-1", Version="1", Token="TOK-1"' };
+    assert.strictEqual(socketPath('/socket', headers), '/embywebsocket?api_key=TOK-1&deviceId=dev-1');
+    assert.strictEqual(socketPath('/socket?x=1', headers), '/embywebsocket?x=1&api_key=TOK-1&deviceId=dev-1');
+});
+
+test('socketPath leaves a query that already has credentials alone', () => {
+    const headers = { authorization: 'MediaBrowser DeviceId="dev-1", Token="TOK-1"' };
+    assert.strictEqual(socketPath('/socket?api_key=Q&deviceId=D', headers), '/embywebsocket?api_key=Q&deviceId=D');
+    assert.strictEqual(socketPath('/socket', {}), '/embywebsocket');
 });

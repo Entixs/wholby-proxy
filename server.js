@@ -1255,13 +1255,30 @@ const jsonProxy = createProxyMiddleware({
     })
 });
 
-// Jellyfin's /socket is Emby's /embywebsocket (same JSON message envelope).
+// Jellyfin's /socket is Emby's /embywebsocket (same JSON message envelope). Emby finds the session from api_key and
+// deviceId in the URL, but Wholphin sends the socket request with no query and the token only in the Authorization
+// header; without them Emby logs "Unable to determine session based on url" and drops the socket after 30 seconds.
+const socketPath = (rawUrl, headers = {}) => {
+    const out = String(rawUrl).replace(/^\/socket/i, '/embywebsocket');
+    const [base, query = ''] = out.split(/\?(.*)/s);
+    const params = new URLSearchParams(query);
+    const has = (name) => [...params.keys()].some((k) => k.toLowerCase() === name);
+    const auth = headers['x-emby-authorization'] || headers['authorization'] || '';
+    const field = (name) => (auth.match(new RegExp(`${name}="([^"]+)"`, 'i')) || [])[1];
+    const token = field('Token') || headers['x-emby-token'] || headers['x-mediabrowser-token'];
+    const device = field('DeviceId');
+    if (token && !has('api_key') && !has('token')) params.set('api_key', token);
+    if (device && !has('deviceid')) params.set('deviceId', device);
+    const q = params.toString();
+    return q ? `${base}?${q}` : base;
+};
+
 const wsProxy = createProxyMiddleware({
     target: settings.embyUrl,
     router: () => settings.embyUrl,
     changeOrigin: true,
     ws: true,
-    pathRewrite: { '^/socket': '/embywebsocket' },
+    pathRewrite: (p, req) => socketPath(p, req.headers),
     onError,
     // TCP keepalive on both legs, and a close log that says who hung up first and after how long.
     // (App-level pings are not injected: the sockets are piped raw, so a ping could land mid-frame.)
@@ -1319,4 +1336,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { parseEmbyUrl, settings, validateSettings, applySettings, stats, recentErrors, rewriteUniversalAudio, rememberDevice, forceDirectPlayRequest, forceDirectPlayResponse, isTranscodeRequest, normalizeUserData, asksOnlyForJellyTypes, app, rememberPlaySession, resolveStreamToken, shouldRedirect, planSplit, splitItems, resumeQuery, toUUID, deflateUUID, deflatePath, cleanQuery, rewriteRoute, transformPath, isBinaryPath, redact, describeClient, throttleError, patchUser };
+module.exports = { parseEmbyUrl, settings, validateSettings, applySettings, stats, recentErrors, rewriteUniversalAudio, rememberDevice, forceDirectPlayRequest, forceDirectPlayResponse, isTranscodeRequest, normalizeUserData, asksOnlyForJellyTypes, app, rememberPlaySession, resolveStreamToken, shouldRedirect, planSplit, splitItems, resumeQuery, toUUID, deflateUUID, deflatePath, cleanQuery, rewriteRoute, transformPath, isBinaryPath, redact, describeClient, throttleError, patchUser, socketPath };
