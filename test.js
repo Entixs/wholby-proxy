@@ -5,7 +5,7 @@ process.env.TOKEN_FILE = path.join(tmp, 'tokens.json');
 process.env.DISPLAY_PREFS_FILE = path.join(tmp, 'displayprefs.json');
 const test = require('node:test');
 const assert = require('node:assert');
-const { rewriteUniversalAudio, rememberDevice, forceDirectPlayRequest, forceDirectPlayResponse, isTranscodeRequest, normalizeUserData, asksOnlyForJellyTypes, app, rememberPlaySession, resolveStreamToken, shouldRedirect, planSplit, splitItems, toUUID, deflateUUID, transformPath, isBinaryPath, redact, describeClient, throttleError, patchUser, socketPath } = require('./server');
+const { rewriteUniversalAudio, rememberDevice, forceDirectPlayRequest, forceDirectPlayResponse, isTranscodeRequest, normalizeUserData, asksOnlyForJellyTypes, app, rememberPlaySession, resolveStreamToken, shouldRedirect, planSplit, splitItems, toUUID, deflateUUID, transformPath, isBinaryPath, redact, describeClient, throttleError, patchUser, socketPath, fillLastPlayed } = require('./server');
 
 const UID = '1a2b3c';
 
@@ -313,4 +313,31 @@ test('socketPath leaves a query that already has credentials alone', () => {
     const headers = { authorization: 'MediaBrowser DeviceId="dev-1", Token="TOK-1"' };
     assert.strictEqual(socketPath('/socket?api_key=Q&deviceId=D', headers), '/embywebsocket?api_key=Q&deviceId=D');
     assert.strictEqual(socketPath('/socket', {}), '/embywebsocket');
+});
+
+test('fillLastPlayed adds the missing LastPlayedDate to resume items, using the client token', async () => {
+    const calls = [];
+    const fetchImpl = async (url, opts) => {
+        calls.push({ url, token: opts.headers['X-Emby-Token'] });
+        if (url.endsWith('/9')) return { ok: false };
+        return { ok: true, json: async () => ({ UserData: { LastPlayedDate: '2026-11-10T02:48:45.0000000Z' } }) };
+    };
+    const data = { Items: [
+        { Id: toUUID('7'), UserData: { PlaybackPositionTicks: 5 } },
+        { Id: toUUID('8'), UserData: { LastPlayedDate: 'already' } },
+        { Id: toUUID('9'), UserData: { PlaybackPositionTicks: 5 } },
+    ] };
+    await fillLastPlayed(data, { embyUrl: 'http://emby', userId: 'u1', token: 'TOK', fetchImpl });
+    assert.strictEqual(data.Items[0].UserData.LastPlayedDate, '2026-11-10T02:48:45.0000000Z');
+    assert.strictEqual(data.Items[1].UserData.LastPlayedDate, 'already', 'an existing date is kept');
+    assert.strictEqual(data.Items[2].UserData.LastPlayedDate, undefined, 'a failed lookup leaves the item alone');
+    assert.deepStrictEqual(calls.map((c) => c.url), ['http://emby/emby/Users/u1/Items/7', 'http://emby/emby/Users/u1/Items/9']);
+    assert.ok(calls.every((c) => c.token === 'TOK'));
+});
+
+test('fillLastPlayed survives a throwing fetch and a missing user', async () => {
+    const data = { Items: [{ Id: toUUID('7'), UserData: {} }] };
+    await fillLastPlayed(data, { embyUrl: 'http://emby', userId: 'u1', token: 'T', fetchImpl: async () => { throw new Error('down'); } });
+    assert.strictEqual(data.Items[0].UserData.LastPlayedDate, undefined);
+    assert.strictEqual(await fillLastPlayed(data, { embyUrl: 'http://emby', userId: null, token: 'T' }), data);
 });

@@ -844,6 +844,27 @@ const splitItems = (data, plan) => {
     return { ...data, Items: items.slice(plan.startIndex, end), TotalRecordCount: total, StartIndex: plan.startIndex };
 };
 
+// Emby's Resume list leaves UserData.LastPlayedDate out, but a single item has it. Wholphin's combined Continue Watching
+// row sorts resume and next-up items by that date (missing dates sort last) and then keeps only the newest few, so a
+// resume item without a date is pushed off the end whenever there are enough next-up items. Fill the date in.
+const fillLastPlayed = async (data, { embyUrl, userId, token, fetchImpl = fetch }) => {
+    if (!data || !Array.isArray(data.Items) || !userId) return data;
+    await Promise.all(data.Items.map(async (item) => {
+        const ud = item && item.UserData;
+        if (!ud || ud.LastPlayedDate || !item.Id) return;
+        try {
+            const r = await fetchImpl(`${embyUrl}/emby/Users/${userId}/Items/${deflateUUID(item.Id)}`, {
+                headers: token ? { 'X-Emby-Token': token } : {},
+                signal: AbortSignal.timeout(4000),
+            });
+            if (!r.ok) return;
+            const full = await r.json();
+            if (full && full.UserData && full.UserData.LastPlayedDate) ud.LastPlayedDate = full.UserData.LastPlayedDate;
+        } catch { /* leave the item as it is */ }
+    }));
+    return data;
+};
+
 // Map Jellyfin routes (including the 10.9+ ones) onto their Emby equivalents.
 const rewriteRoute = (newPath, userId) => {
     const ID = '([0-9a-fA-F-]{1,36})';
@@ -1232,6 +1253,9 @@ const jsonProxy = createProxyMiddleware({
                 }
 
                 if (req.wholbyPlan) data = splitItems(data, req.wholbyPlan);
+                if (req.wholbyPlan && req.wholbyPlan.kind === 'resume') {
+                    data = await fillLastPlayed(data, { embyUrl: settings.embyUrl, userId: getUserIdFromReq(req.url, req), token: tokenFromRequest(req.url, req.headers) });
+                }
 
                 if (req.url.match(/^\/?(emby\/)?Users(\/Public|\?|$)/i) && Array.isArray(data)) {
                     data = data.map(u => patchUser(u));
@@ -1336,4 +1360,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { parseEmbyUrl, settings, validateSettings, applySettings, stats, recentErrors, rewriteUniversalAudio, rememberDevice, forceDirectPlayRequest, forceDirectPlayResponse, isTranscodeRequest, normalizeUserData, asksOnlyForJellyTypes, app, rememberPlaySession, resolveStreamToken, shouldRedirect, planSplit, splitItems, resumeQuery, toUUID, deflateUUID, deflatePath, cleanQuery, rewriteRoute, transformPath, isBinaryPath, redact, describeClient, throttleError, patchUser, socketPath };
+module.exports = { parseEmbyUrl, settings, validateSettings, applySettings, stats, recentErrors, rewriteUniversalAudio, rememberDevice, forceDirectPlayRequest, forceDirectPlayResponse, isTranscodeRequest, normalizeUserData, asksOnlyForJellyTypes, app, rememberPlaySession, resolveStreamToken, shouldRedirect, planSplit, splitItems, resumeQuery, toUUID, deflateUUID, deflatePath, cleanQuery, rewriteRoute, transformPath, isBinaryPath, redact, describeClient, throttleError, patchUser, socketPath, fillLastPlayed };
