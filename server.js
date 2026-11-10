@@ -1319,4 +1319,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { parseEmbyUrl, settings, validateSettings, applySettings, stats, recentErrors, rewriteUniversalAudio, rememberDevice, forceDirectPlayRequest, forceDirectPlayResponse, isTranscodeRequest, normalizeUserData, asksOnlyForJellyTypes, app, rememberPlaySession, resolveStreamToken, shouldRedirect, planSplit, splitItems, resumeQuery, toUUID, deflateUUID, deflatePath, cleanQuery, rewriteRoute, transformPath, isBinaryPath, redact, describeClient, throttleError };
+module.exports = { parseEmbyUrl, settings, validateSettings, applySettings, stats, recentErrors, rewriteUniversalAudio, rememberDevice, forceDirectPlayRequest, forceDirectPlayResponse, isTranscodeRequest, normalizeUserData, asksOnlyForJellyTypes, app, rememberPlaySession, resolveStreamToken, shouldRedirect, planSplit, splitItems, resumeQuery, toUUID, deflateUUID, deflatePath, cleanQuery, rewriteRoute, transformPath, isBinaryPath, redact, describeClient, throttleError, patchUser };

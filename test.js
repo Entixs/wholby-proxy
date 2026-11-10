@@ -5,7 +5,7 @@ process.env.TOKEN_FILE = path.join(tmp, 'tokens.json');
 process.env.DISPLAY_PREFS_FILE = path.join(tmp, 'displayprefs.json');
 const test = require('node:test');
 const assert = require('node:assert');
-const { rewriteUniversalAudio, rememberDevice, forceDirectPlayRequest, forceDirectPlayResponse, isTranscodeRequest, normalizeUserData, asksOnlyForJellyTypes, app, rememberPlaySession, resolveStreamToken, shouldRedirect, planSplit, splitItems, toUUID, deflateUUID, transformPath, isBinaryPath, redact, describeClient, throttleError } = require('./server');
+const { rewriteUniversalAudio, rememberDevice, forceDirectPlayRequest, forceDirectPlayResponse, isTranscodeRequest, normalizeUserData, asksOnlyForJellyTypes, app, rememberPlaySession, resolveStreamToken, shouldRedirect, planSplit, splitItems, toUUID, deflateUUID, transformPath, isBinaryPath, redact, describeClient, throttleError, patchUser } = require('./server');
 
 const UID = '1a2b3c';
 
@@ -276,4 +276,29 @@ test('throttleError logs the first error, skips repeats, then reports the skippe
     assert.strictEqual(throttleError('k1', t + 2000), null);
     assert.strictEqual(throttleError('k1', t + 11 * 60 * 1000), 2);
     assert.strictEqual(throttleError('k2', t), 0);
+});
+
+test('patchUser converts library ids in the user Configuration to UUIDs', () => {
+    const user = {
+        Id: '7',
+        Configuration: {
+            GroupedFolders: ['11'],
+            OrderedViews: ['12', '13'],
+            LatestItemsExcludes: ['14'],
+            MyMediaExcludes: ['15'],
+            PlayDefaultAudioTrack: false,
+        },
+    };
+    const out = patchUser(user);
+    assert.deepStrictEqual(out.Configuration.GroupedFolders, [toUUID('11')]);
+    assert.deepStrictEqual(out.Configuration.OrderedViews, [toUUID('12'), toUUID('13')]);
+    assert.deepStrictEqual(out.Configuration.LatestItemsExcludes, [toUUID('14')]);
+    assert.deepStrictEqual(out.Configuration.MyMediaExcludes, [toUUID('15')]);
+    assert.strictEqual(out.Configuration.PlayDefaultAudioTrack, false, 'other Configuration keys are kept');
+});
+
+test('patchUser copes with a user that has no Configuration', () => {
+    const out = patchUser({ Id: '7' });
+    assert.ok(out.Configuration);
+    assert.ok(Array.isArray(out.Policy.EnabledFolders));
 });
