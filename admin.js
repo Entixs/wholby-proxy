@@ -43,7 +43,8 @@ const signSession = (secret, now = Date.now()) => {
     return `${body}.${crypto.createHmac('sha256', secret).update(body).digest('hex')}`;
 };
 
-const verifySession = (secret, value, now = Date.now()) => {
+// validAfter: sessions issued at or before this time (ms) are rejected. Logout sets it, so a copied cookie stops working.
+const verifySession = (secret, value, now = Date.now(), validAfter = 0) => {
     if (typeof value !== 'string' || !secret) return false;
     const parts = value.split('.');
     if (parts.length !== 3) return false;
@@ -52,7 +53,8 @@ const verifySession = (secret, value, now = Date.now()) => {
     const a = Buffer.from(signature, 'hex');
     const b = Buffer.from(expected, 'hex');
     if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return false;
-    return Number(expiry) > now;
+    if (!(Number(expiry) > now)) return false;
+    return Number(expiry) - SESSION_MS > validAfter;
 };
 
 const adminFile = (dataDir) => path.join(dataDir, 'admin.json');
@@ -64,6 +66,16 @@ const savePassword = (dataDir, password) => {
     const tmp = `${adminFile(dataDir)}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(record, null, 2), { mode: 0o600 });
     fs.renameSync(tmp, adminFile(dataDir));
+};
+
+// Rejects every session issued up to now (used by logout). Stored in admin.json so it survives restarts.
+const revokeSessions = (dataDir, now = Date.now()) => {
+    const rec = readAdminRecord(dataDir);
+    if (!rec) return false;
+    const tmp = `${adminFile(dataDir)}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify({ ...rec, sessionsValidAfter: now }, null, 2), { mode: 0o600 });
+    fs.renameSync(tmp, adminFile(dataDir));
+    return true;
 };
 
 const readAdminRecord = (dataDir) => {
@@ -165,7 +177,7 @@ const createAdminApp = (ctx) => {
 
     const isAuthenticated = (req) => {
         const rec = readAdminRecord(ctx.dataDir);
-        return Boolean(rec) && verifySession(rec.sessionSecret, getCookie(req, COOKIE));
+        return Boolean(rec) && verifySession(rec.sessionSecret, getCookie(req, COOKIE), Date.now(), Number(rec.sessionsValidAfter) || 0);
     };
     const requireAuth = (req, res, next) => {
         if (!readAdminRecord(ctx.dataDir)) return res.status(503).json({ error: 'The admin password is not set yet. Run: npm run admin-password' });
@@ -197,6 +209,8 @@ const createAdminApp = (ctx) => {
     });
 
     app.post('/api/logout', requireJsonAction, (req, res) => {
+        // Only a logged-in admin can revoke sessions; this signs out every device, not just this browser.
+        if (isAuthenticated(req)) revokeSessions(ctx.dataDir);
         setSessionCookie(req, res, '', 0);
         res.json({ ok: true });
     });
@@ -281,4 +295,4 @@ const start = (ctx) => {
     return server;
 };
 
-module.exports = { start, createAdminApp, probeEmby, hashPassword, verifyPassword, signSession, verifySession, savePassword, readAdminRecord, SESSION_MS };
+module.exports = { start, createAdminApp, probeEmby, hashPassword, verifyPassword, signSession, verifySession, savePassword, readAdminRecord, revokeSessions, SESSION_MS };
