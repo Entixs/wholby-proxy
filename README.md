@@ -31,7 +31,7 @@ Is the proxy going to be on the same machine as Emby? Emby already uses port 809
 **1. Download the project**
 
 ```
-git clone https://github.com/Entixs/wholby-proxy.git
+git clone https://github.com/burntslurm/wholby-proxy.git
 cd wholby-proxy
 ```
 
@@ -88,7 +88,7 @@ Useful Docker commands:
 **2. Download the project**
 
 ```
-git clone https://github.com/Entixs/wholby-proxy.git
+git clone https://github.com/burntslurm/wholby-proxy.git
 cd wholby-proxy
 npm ci --omit=dev
 ```
@@ -390,6 +390,7 @@ After changing `.env`, restart the proxy.
 | Video won't play | The TV may not be able to reach Emby directly: set `STREAM_MODE=proxy`. Or the file's format isn't supported by the TV (direct-play-only mode never transcodes) |
 | The log says `EACCES: permission denied` for `data/` (Docker) | The `data` folder is owned by root. Run `sudo chown -R 1000:1000 ./data` and restart |
 | You get logged out after every restart | Make sure the `data` folder is kept. With Docker, the `./data:/app/data` line in `docker-compose.yml` must stay |
+| The **Next Up** row in Wholphin is broken | Emby merges Next Up and Continue Watching into one feed, so remove the Next Up row in Wholphin: Left Nav Bar > Settings > Customize Home Screen > Settings > **Reset Settings**, which unhides the option to delete the row. Repeat this reset whenever you change the home screen layout. Emby and Jellyfin settings do not translate perfectly, so expect some jankiness |
 | The Continue Watching row is empty | It shows what the user has started or what comes next in shows they watch. Watch something first |
 
 ---
@@ -446,6 +447,6 @@ The files in the `deploy/` folder are a working example of the service and nginx
 
 ## Acknowledgements
 
-* Created to bridge Emby backends with the Wholphin client.
-* Built with Express and http-proxy-middleware.
-* Developed with the assistance of AI tools.
+* Created specifically to bridge Emby backends with the Wholphin client ecosystem.
+* Built using Express and http-proxy-middleware.
+* Developed with the assistance of AI tools. Or the other way around, really... I basically gave the AI emotional support.
